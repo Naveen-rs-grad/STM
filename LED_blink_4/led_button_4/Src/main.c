@@ -103,8 +103,8 @@ int main(void)
 	      // Wait for button press
 	      if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
 	      {
-	          // Toggle blinking state
-	          blinking = !blinking;
+	    	  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+	    	  HAL_Delay(500);
 
 	          // Wait until button is released
 	          while (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
@@ -112,16 +112,16 @@ int main(void)
 	          }
 	      }
 
-	      // Blink LED if enabled
-	      if (blinking)
-	      {
-	          HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	          HAL_Delay(500);
-	      }
-	      else
-	      {
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-	      }
+//	      // Blink LED if enabled
+//	      if (blinking)
+//	      {
+//	          HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+//	          HAL_Delay(500);
+//	      }
+//	      else
+//	      {
+//	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+//	      }
 	  }
 	  /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
