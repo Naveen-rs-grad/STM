@@ -1,0 +1,8 @@
+../Src/dht11.c:7:13:DHT11_SetOutput	1
+../Src/dht11.c:19:13:DHT11_SetInput	1
+../Src/dht11.c:32:13:DHT11_DelayUs	2
+../Src/dht11.c:43:16:DHT11_WaitForState	3
+../Src/dht11.c:60:16:DHT11_Start	4
+../Src/dht11.c:93:16:DHT11_ReadBit	5
+../Src/dht11.c:134:16:DHT11_ReadByte	3
+../Src/dht11.c:154:9:DHT11_Read	5

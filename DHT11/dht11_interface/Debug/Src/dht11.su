@@ -1,0 +1,8 @@
+../Src/dht11.c:7:13:DHT11_SetOutput	32	static
+../Src/dht11.c:19:13:DHT11_SetInput	32	static
+../Src/dht11.c:32:13:DHT11_DelayUs	16	static
+../Src/dht11.c:43:16:DHT11_WaitForState	16	static
+../Src/dht11.c:60:16:DHT11_Start	8	static
+../Src/dht11.c:93:16:DHT11_ReadBit	24	static
+../Src/dht11.c:134:16:DHT11_ReadByte	24	static
+../Src/dht11.c:154:9:DHT11_Read	24	static
