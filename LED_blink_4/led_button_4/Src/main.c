@@ -94,8 +94,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	  /* USER CODE BEGIN WHILE */
 	  while (1)
 	  {
 	      static uint8_t blinking = 0;
@@ -112,16 +110,6 @@ int main(void)
 	          }
 	      }
 
-//	      // Blink LED if enabled
-//	      if (blinking)
-//	      {
-//	          HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-//	          HAL_Delay(500);
-//	      }
-//	      else
-//	      {
-//	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-//	      }
 	  }
 	  /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */

@@ -2,8 +2,6 @@
 
 extern TIM_HandleTypeDef htim2;
 
-/* ---------- GPIO configuration ---------- */
-
 static void DHT11_SetOutput(void)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -38,8 +36,6 @@ static void DHT11_DelayUs(uint16_t us)
     }
 }
 
-/* ---------- Wait for a specific pin state ---------- */
-
 static uint8_t DHT11_WaitForState(GPIO_PinState state, uint32_t timeout_us)
 {
     __HAL_TIM_SET_COUNTER(&htim2, 0);
@@ -54,8 +50,6 @@ static uint8_t DHT11_WaitForState(GPIO_PinState state, uint32_t timeout_us)
 
     return 1;
 }
-
-/* ---------- Start communication ---------- */
 
 static uint8_t DHT11_Start(void)
 {
@@ -87,8 +81,6 @@ static uint8_t DHT11_Start(void)
 
     return 1;
 }
-
-/* ---------- Read one bit ---------- */
 
 static uint8_t DHT11_ReadBit(uint8_t *bit)
 {
@@ -129,8 +121,6 @@ static uint8_t DHT11_ReadBit(uint8_t *bit)
     return 1;
 }
 
-/* ---------- Read one byte ---------- */
-
 static uint8_t DHT11_ReadByte(uint8_t *value)
 {
     uint8_t bit;
@@ -149,15 +139,10 @@ static uint8_t DHT11_ReadByte(uint8_t *value)
     return 1;
 }
 
-/* ---------- Public function ---------- */
-
 uint8_t DHT11_Read(DHT11_Data_t *data)
 {
     uint8_t raw[5];
 
-    /*
-     * Start communication.
-     */
     if (!DHT11_Start())
         return 0;
 
@@ -177,10 +162,7 @@ uint8_t DHT11_Read(DHT11_Data_t *data)
             return 0;
     }
 
-    /*
-     * Verify checksum.
-     */
-    if ((uint8_t)(raw[0] + raw[1] + raw[2] + raw[3]) != raw[4])
+    if ((uint8_t)(raw[0] + raw[1] + raw[2] + raw[3]) != raw[4]) //checksum verification
     {
         return 0;
     }
