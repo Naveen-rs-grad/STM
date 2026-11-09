@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,7 +46,8 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
+/* The fan produces two tach pulses per revolution. */
+static volatile uint32_t tachPulseCount = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -72,7 +73,10 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  uint32_t previousPulseCount = 0U;
+  uint32_t lastRpmTime;
+  uint32_t phaseStartTime;
+  uint32_t dutyPercent = 0U;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -97,13 +101,22 @@ int main(void)
   MX_TIM2_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  /* Basic spin test: PB10 / TIM2_CH3 at 100% duty (full speed). */
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3,
-                        __HAL_TIM_GET_AUTORELOAD(&htim2) + 1U);
+  /* Begin with five seconds stopped. Keep PWM running at 0% duty. */
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0U);
   if (HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
   }
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  const char startupMessage[] = "\r\nFan test: 5s STOP / 5s RUN. RPM printed every second.\r\n";
+  HAL_UART_Transmit(&huart2, (const uint8_t *)startupMessage,
+                    sizeof(startupMessage) - 1U, 100U);
+  phaseStartTime = HAL_GetTick();
+  lastRpmTime = phaseStartTime;
+  previousPulseCount = tachPulseCount;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -112,15 +125,38 @@ int main(void)
   {
     /* USER CODE END WHILE */
 
-    /* Stop for 5 seconds. */
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0U);
-    HAL_Delay(5000U);
-      
-    /* Run at full speed for 5 seconds. */
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 640U);
-    HAL_Delay(5000U);
-
     /* USER CODE BEGIN 3 */
+    uint32_t now = HAL_GetTick();
+
+    if ((now - lastRpmTime) >= 1000U)
+    {
+      /* One aligned 32-bit read is atomic; never reset the ISR's counter. */
+      uint32_t pulseCount = tachPulseCount;
+      uint32_t pulses = pulseCount - previousPulseCount;
+      uint32_t elapsedMs = now - lastRpmTime;
+      uint32_t rpm = (uint32_t)(((uint64_t)pulses * 60000U) / (2U * elapsedMs));
+      previousPulseCount = pulseCount;
+      lastRpmTime = now;
+
+      char message[64];
+      int length = snprintf(message, sizeof(message), "PWM: %lu%% | RPM: %lu\r\n",
+                            (unsigned long)dutyPercent, (unsigned long)rpm);
+      if ((length > 0) && ((size_t)length < sizeof(message)))
+      {
+        HAL_UART_Transmit(&huart2, (const uint8_t *)message, (uint16_t)length, 100U);
+      }
+    }
+
+    /* Change the command every five seconds while RPM sampling continues. */
+    if ((now - phaseStartTime) >= 5000U)
+    {
+      dutyPercent = (dutyPercent == 0U) ? 100U : 0U;
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3,
+                            (dutyPercent == 100U) ?
+                            __HAL_TIM_GET_AUTORELOAD(&htim2) + 1U : 0U);
+      phaseStartTime = now;
+    }
+    HAL_Delay(1U);
   }
   /* USER CODE END 3 */
 }
@@ -318,7 +354,13 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+  if ((htim->Instance == TIM1) && (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1))
+  {
+    tachPulseCount++;
+  }
+}
 /* USER CODE END 4 */
 
 /**
