@@ -27,7 +27,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-typedef enum { TEST_HOLD, TEST_COMPARE, TEST_CHARACTERIZE } FanTestPlan;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -47,34 +47,15 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-/* USER SETTINGS: target, mode and experiment can also be changed in the debugger.
-   TEST_COMPARE runs all four modes once; TEST_HOLD uses controllerMode. */
 volatile float targetRpm = 3500.0f;
-volatile FanControlMode controllerMode = FAN_MODE_PID;
-volatile FanTestPlan testPlan = TEST_COMPARE;
-
-/* Starting gains, not hardware-tuned. Duty is percent, time is seconds.
-   Existing log, after 3 s settling: ~4094 RPM at 100%; Kplant ~40.94 RPM/percent.
-   Kp = 0.5/Kplant; Ki = Kp/2 seconds; Kd = Kp*0.05 seconds. */
-static const float Kp = 0.0122f;
-static const float Ki = 0.0061f;
-static const float Kd = 0.00061f;
+volatile FanControlMode controllerMode = FAN_MODE_PD;
+static const float Kp = 0.0122f, Ki = 0.0061f, Kd = 0.00061f;
+static const float fullSpeedRpm = 4093.65f;
 static const float derivativeFilterSeconds = 0.20f;
-static const bool useFeedforward = true;
 static const uint32_t controlPeriodMs = 100U;
 
-/* Provisional endpoint estimate. Replace with measured sweep points. */
-static const FanMapPoint openLoopMap[] = {{0.0f, 0.0f}, {4093.65f, 100.0f}};
-static const float stepFractions[] = {0.0f, 1.0f, 0.7f, 1.0f, 0.0f};
-static const uint32_t stepDurationsMs[] = {5000U, 10000U, 10000U, 10000U, 5000U};
-static const float calibrationDuties[] = {0.0f, 20.0f, 35.0f, 50.0f,
-                                         65.0f, 80.0f, 100.0f, 0.0f};
-static const uint32_t calibrationDwellMs = 8000U;
-
-/* The fan produces two tach pulses per revolution. */
 static volatile uint32_t tachPulseCount = 0U;
 static volatile uint32_t lastTachPulseMs = 0U;
-static FanController fanController;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,29 +101,6 @@ static float ReadFanRpm(uint32_t *sampleTime)
   return rpm;
 }
 
-static uint32_t ComparisonDurationMs(void)
-{
-  uint32_t duration = 0U;
-  for (size_t i = 0U; i < sizeof(stepDurationsMs) / sizeof(stepDurationsMs[0]); i++)
-  {
-    duration += stepDurationsMs[i];
-  }
-  return duration;
-}
-
-static float ComparisonTarget(uint32_t elapsed, float target)
-{
-  for (size_t i = 0U; i < sizeof(stepFractions) / sizeof(stepFractions[0]); i++)
-  {
-    if (elapsed < stepDurationsMs[i])
-    {
-      return target * stepFractions[i];
-    }
-    elapsed -= stepDurationsMs[i];
-  }
-  return 0.0f;
-}
-
 static float ApplyFanDuty(float duty)
 {
   if (duty < 0.0f) { duty = 0.0f; }
@@ -152,7 +110,6 @@ static float ApplyFanDuty(float duty)
   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, compare);
   return (float)compare * 100.0f / (float)period;
 }
-
 /* USER CODE END 0 */
 
 /**
@@ -163,10 +120,14 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  uint32_t nextControlTime;
-  uint32_t experimentStartTime;
-  FanTestPlan activePlan;
-  /* USER CODE END 1 */
+  FanController controller = {
+    .kp = Kp, .ki = Ki, .kd = Kd,
+    .dt = (float)controlPeriodMs / 1000.0f,
+    .max_rpm = fullSpeedRpm, .derivative_tau = derivativeFilterSeconds
+  };
+  FanControlMode previousMode = controllerMode;
+  uint32_t nextControlTime, startTime;
+/* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -190,20 +151,6 @@ int main(void)
   MX_TIM2_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  const FanControllerConfig controllerConfig = {
-    .sample_seconds = (float)controlPeriodMs / 1000.0f,
-    .kp = Kp, .ki = Ki, .kd = Kd,
-    .derivative_tau = derivativeFilterSeconds,
-    .duty_min = 0.0f, .duty_max = 100.0f,
-    .use_feedforward = useFeedforward,
-    .map = openLoopMap,
-    .map_count = sizeof(openLoopMap) / sizeof(openLoopMap[0])
-  };
-  if (!FanController_Init(&fanController, &controllerConfig))
-  {
-    Error_Handler();
-  }
-  /* Preserve the verified PWM channel and input-capture interrupt. */
   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0U);
   if (HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3) != HAL_OK)
   {
@@ -213,10 +160,10 @@ int main(void)
   {
     Error_Handler();
   }
-  experimentStartTime = HAL_GetTick();
-  nextControlTime = experimentStartTime + controlPeriodMs;
-  activePlan = testPlan;
-  /* USER CODE END 2 */
+  FanController_Reset(&controller);
+  startTime = HAL_GetTick();
+  nextControlTime = startTime + controlPeriodMs;
+/* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -226,103 +173,54 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     uint32_t now = HAL_GetTick();
-
     if ((int32_t)(now - nextControlTime) >= 0)
     {
-      /* Deadline advances by Ts, not by logging time. Never run catch-up
-         updates on the same measurement after a missed control period. */
-      /* Allow millisecond tick jitter, but never follow a very late sample
-         with another control update only a few milliseconds later. */
-      bool missedPeriod = (now - nextControlTime) > 5U;
-      if (missedPeriod)
-      {
-        FanController_Reset(&fanController);
-        nextControlTime = now;
-      }
-      nextControlTime += controlPeriodMs;
+      bool late = (now - nextControlTime) > 5U;
+      nextControlTime = (late ? now : nextControlTime) + controlPeriodMs;
       float rpm = ReadFanRpm(&now);
-      if (missedPeriod)
+      if (late)
       {
-        /* Refresh the measurement baseline, hold the last PWM output, and
-           wait for a fresh Ts window instead of integrating stale data. */
+        FanController_Reset(&controller);
         continue;
       }
-
-      if (activePlan != testPlan)
-      {
-        activePlan = testPlan;
-        experimentStartTime = now;
-        FanController_Reset(&fanController);
-      }
-      uint32_t elapsed = now - experimentStartTime;
       FanControlMode mode = controllerMode;
-      float requestedRpm = targetRpm;
+      if (mode != previousMode)
+      {
+        FanController_Reset(&controller);
+        previousMode = mode;
+      }
+      float target = targetRpm;
       float duty = 0.0f;
-      bool done = false;
-      const char *modeName;
-
-      if (activePlan == TEST_COMPARE)
+      /* Each controller can be called separately here. */
+      switch (mode)
       {
-        uint32_t duration = ComparisonDurationMs();
-        uint32_t modeIndex = elapsed / duration;
-        done = modeIndex >= FAN_MODE_COUNT;
-        mode = done ? FAN_MODE_PID : (FanControlMode)modeIndex;
-        requestedRpm = done ? 0.0f : ComparisonTarget(elapsed % duration, targetRpm);
-      }
-      else if (activePlan == TEST_CHARACTERIZE)
-      {
-        uint32_t step = elapsed / calibrationDwellMs;
-        done = step >= sizeof(calibrationDuties) / sizeof(calibrationDuties[0]);
-        duty = done ? 0.0f : calibrationDuties[step];
-        requestedRpm = 0.0f;
-        mode = FAN_MODE_OPEN_LOOP;
-      }
-      else if (activePlan != TEST_HOLD)
-      {
-        done = true;
-        requestedRpm = 0.0f;
-      }
-
-      if (!FanController_SetMode(&fanController, mode))
-      {
-        done = true;
-        requestedRpm = 0.0f;
-      }
-      if (done)
-      {
-        FanController_Reset(&fanController);
-        duty = 0.0f;
-        modeName = "DONE";
-      }
-      else if (activePlan == TEST_CHARACTERIZE)
-      {
-        modeName = "CALIBRATION";
-      }
-      else
-      {
-        duty = FanController_Update(&fanController, requestedRpm, rpm);
-        modeName = FanController_ModeName(mode);
+        case FAN_MODE_OPEN_LOOP: duty = Fan_OpenLoop(&controller, target); break;
+        case FAN_MODE_P:         duty = Fan_P(&controller, target, rpm); break;
+        case FAN_MODE_PD:        duty = Fan_PD(&controller, target, rpm); break;
+        case FAN_MODE_PID:       duty = Fan_PID(&controller, target, rpm); break;
+        default:                FanController_Reset(&controller); break;
       }
       duty = ApplyFanDuty(duty);
 
-      /* CSV: time_ms,target_rpm,actual_rpm,pwm_duty,control_mode.
-         Integer formatting avoids enabling printf's floating-point library. */
-      uint32_t loggedTarget = requestedRpm > 0.0f ? (uint32_t)(requestedRpm + 0.5f) : 0U;
+      /* CSV: time_ms,target_rpm,actual_rpm,pwm_duty,control_mode. */
+      static const char *const names[] = {"OPEN_LOOP", "P", "PD", "PID"};
+      const char *name = (unsigned int)mode < 4U ? names[mode] : "INVALID";
       uint32_t dutyTenths = (uint32_t)(duty * 10.0f + 0.5f);
-      char message[96];
+      char message[80];
       int length = snprintf(message, sizeof(message), "%lu,%lu,%lu,%lu.%lu,%s\r\n",
-                            (unsigned long)elapsed, (unsigned long)loggedTarget,
+                            (unsigned long)(now - startTime),
+                            (unsigned long)(target > 0.0f ? target + 0.5f : 0.0f),
                             (unsigned long)(rpm + 0.5f),
                             (unsigned long)(dutyTenths / 10U),
-                            (unsigned long)(dutyTenths % 10U), modeName);
-      if ((length > 0) && ((size_t)length < sizeof(message)))
+                            (unsigned long)(dutyTenths % 10U), name);
+      if (length > 0 && (size_t)length < sizeof(message))
       {
         HAL_UART_Transmit(&huart2, (const uint8_t *)message, (uint16_t)length, 20U);
       }
     }
     HAL_Delay(1U);
   }
-  /* USER CODE END 3 */
+/* USER CODE END 3 */
 }
 
 /**
